@@ -13,11 +13,10 @@ function loadJwtSecret() {
     const fs = require("node:fs");
     const path = require("node:path");
     const crypto = require("node:crypto");
-    // Hardcode path to avoid importing DATA_DIR which may import more Node modules
-    const os = require("node:os");
-    const dir = process.platform === "win32" 
-      ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "9router")
-      : path.join(os.homedir(), ".9router");
+    
+    // Instead of using os.homedir() which causes NFT bundling errors on Windows,
+    // we use a relative path `.9router` in the project root, or `/tmp` on read-only systems.
+    const dir = path.join(process.cwd(), ".9router");
     
     const file = path.join(dir, "jwt-secret");
     try {

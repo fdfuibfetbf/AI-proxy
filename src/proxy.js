@@ -6,7 +6,7 @@ export const config = {
 };
 
 // Edge-compatible middleware for Vercel
-export async function middleware(request) {
+export async function proxy(request) {
   const { pathname } = request.nextUrl;
 
   // Protect /api/ settings and sensitive routes by requiring JWT
