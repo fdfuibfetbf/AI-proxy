@@ -196,15 +196,14 @@ export async function createVercelPgAdapter() {
   }
 
   function transaction(fn) {
-    const sp = `sp_${Math.random().toString(36).slice(2)}`;
-    db.exec(`SAVEPOINT ${sp}`);
+    // In-memory SQLite on serverless: no concurrent access, so savepoints
+    // are unnecessary and can fail due to PRAGMA interference in sql.js.
+    // Just run the function directly — individual run/exec calls handle markDirty.
     try {
       const result = fn();
-      db.exec(`RELEASE ${sp}`);
       markDirty();
       return result;
     } catch (e) {
-      try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
       throw e;
     }
   }
