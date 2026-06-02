@@ -5,6 +5,9 @@ import os from "os";
 const APP_NAME = "9router";
 
 function defaultDir() {
+  if (process.env.VERCEL) {
+    return path.join('/tmp', `.${APP_NAME}`);
+  }
   if (process.platform === "win32") {
     return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), APP_NAME);
   }
@@ -18,7 +21,7 @@ export function getDataDir() {
     fs.mkdirSync(configured, { recursive: true });
     return configured;
   } catch (e) {
-    if (e?.code === "EACCES" || e?.code === "EPERM") {
+    if (e?.code === "EACCES" || e?.code === "EPERM" || e?.code === "EROFS") {
       console.warn(`[DATA_DIR] '${configured}' not writable → fallback ~/.${APP_NAME}`);
       return defaultDir();
     }

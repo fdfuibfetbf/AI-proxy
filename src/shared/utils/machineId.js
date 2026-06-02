@@ -20,6 +20,7 @@ function loadRawMachineId() {
     if (cachedRawId) return cachedRawId;
   } catch {}
   try {
+    if (process.env.VERCEL) throw new Error('Skip on Vercel');
     cachedRawId = machineIdSync();
   } catch {
     cachedRawId = crypto.randomUUID();
