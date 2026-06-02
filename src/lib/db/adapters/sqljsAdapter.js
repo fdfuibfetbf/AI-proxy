@@ -4,9 +4,28 @@ import { PRAGMA_SQL } from "../schema.js";
 
 let SQL = null;
 
+import https from "node:https";
+import path from "node:path";
+
 async function loadSql() {
   if (SQL) return SQL;
-  SQL = await initSqlJs();
+  
+  let wasmPath = undefined;
+  if (process.env.VERCEL) {
+    wasmPath = "/tmp/sql-wasm.wasm";
+    if (!fs.existsSync(wasmPath)) {
+      await new Promise((resolve, reject) => {
+        https.get("https://unpkg.com/sql.js@1.14.1/dist/sql-wasm.wasm", (res) => {
+          if (res.statusCode !== 200) return reject(new Error(`WASM download failed: ${res.statusCode}`));
+          const file = fs.createWriteStream(wasmPath);
+          res.pipe(file);
+          file.on("finish", () => { file.close(); resolve(); });
+        }).on("error", reject);
+      });
+    }
+  }
+
+  SQL = await initSqlJs(wasmPath ? { locateFile: () => wasmPath } : undefined);
   return SQL;
 }
 

@@ -1,19 +1,35 @@
 import { SignJWT, jwtVerify } from "jose";
-import fs from "node:fs";
-import path from "node:path";
-import crypto from "node:crypto";
-import { DATA_DIR } from "@/lib/dataDir";
 
 function loadJwtSecret() {
   if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  const file = path.join(DATA_DIR, "jwt-secret");
+  
+  // Skip fs on Edge / Vercel
+  if (typeof process !== "undefined" && (process.env.NEXT_RUNTIME === "edge" || process.env.VERCEL)) {
+    return "9router-default-jwt-secret-override-via-env";
+  }
+
   try {
-    return fs.readFileSync(file, "utf8").trim();
-  } catch {}
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const generated = crypto.randomBytes(32).toString("hex");
-  fs.writeFileSync(file, generated, { mode: 0o600 });
-  return generated;
+    // Dynamic require to prevent Edge bundle failures
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const crypto = require("node:crypto");
+    // Hardcode path to avoid importing DATA_DIR which may import more Node modules
+    const os = require("node:os");
+    const dir = process.platform === "win32" 
+      ? path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "9router")
+      : path.join(os.homedir(), ".9router");
+    
+    const file = path.join(dir, "jwt-secret");
+    try {
+      return fs.readFileSync(file, "utf8").trim();
+    } catch {}
+    fs.mkdirSync(dir, { recursive: true });
+    const generated = crypto.randomBytes(32).toString("hex");
+    fs.writeFileSync(file, generated, { mode: 0o600 });
+    return generated;
+  } catch {
+    return "9router-default-jwt-secret-fallback";
+  }
 }
 
 const SECRET = new TextEncoder().encode(loadJwtSecret());
