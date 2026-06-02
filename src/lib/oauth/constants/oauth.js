@@ -42,8 +42,8 @@ export const CODEX_CONFIG = {
 
 // Gemini (Google) OAuth Configuration (Standard OAuth2)
 export const GEMINI_CONFIG = {
-  clientId: "REDACTED_ID_1",
-  clientSecret: "REDACTED_SEC_1",
+  clientId: process.env.GEMINI_OAUTH_CLIENT_ID || "REDACTED_ID_1",
+  clientSecret: process.env.GEMINI_OAUTH_CLIENT_SECRET || "REDACTED_SEC_1",
   authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
   tokenUrl: "https://oauth2.googleapis.com/token",
   userInfoUrl: "https://www.googleapis.com/oauth2/v1/userinfo",
@@ -94,8 +94,8 @@ export const IFLOW_CONFIG = {
 
 // Antigravity OAuth Configuration (Standard OAuth2 with Google)
 export const ANTIGRAVITY_CONFIG = {
-  clientId: "REDACTED_ID_2",
-  clientSecret: "REDACTED_SEC_2",
+  clientId: process.env.ANTIGRAVITY_OAUTH_CLIENT_ID || "REDACTED_ID_2",
+  clientSecret: process.env.ANTIGRAVITY_OAUTH_CLIENT_SECRET || "REDACTED_SEC_2",
   authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
   tokenUrl: "https://oauth2.googleapis.com/token",
   userInfoUrl: "https://www.googleapis.com/oauth2/v1/userinfo",
