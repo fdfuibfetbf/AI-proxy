@@ -56,7 +56,10 @@ async function getNeonSql(connUrl) {
 
 async function neonQuery(connUrl, query, params = []) {
   const sql = await getNeonSql(connUrl);
-  return sql(query, params);
+  // neon() now only works as tagged template; use .query() for conventional calls
+  const result = await sql.query(query, params);
+  // .query() may return rows directly (array) or a result object { rows: [...] }
+  return Array.isArray(result) ? result : (result?.rows ?? []);
 }
 
 /**
