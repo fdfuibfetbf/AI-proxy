@@ -52,12 +52,38 @@ async function trySqlJs() {
   }
 }
 
+async function tryVercelPostgres() {
+  // Only attempt when POSTGRES_URL/DATABASE_URL is available (typically on Vercel)
+  const pgUrl = process.env.POSTGRES_URL || process.env.DATABASE_URL;
+  if (!pgUrl) return null;
+  try {
+    const { createVercelPgAdapter } = await import("./adapters/neonPgAdapter.js");
+    return await createVercelPgAdapter();
+  } catch (e) {
+    console.warn(`[DB] vercel-pg unavailable: ${e.message}`);
+    return null;
+  }
+}
+
 async function initAdapter() {
+  // Vercel Postgres takes priority when available (persistent across invocations)
+  let adapter = await tryVercelPostgres();
+  if (adapter) {
+    if (!state.logged) {
+      console.log(`[DB] Driver: ${adapter.driver}`);
+      state.logged = true;
+    }
+    const { runMigrationOnce } = await import("./migrate.js");
+    await runMigrationOnce(adapter);
+    return adapter;
+  }
+
+  // Local: SQLite adapters
   ensureDirs();
   // Order per runtime:
   //   Bun:  bun:sqlite → sql.js
   //   Node: better-sqlite3 → node:sqlite (≥22.5) → sql.js
-  let adapter = await tryBunSqlite();
+  adapter = await tryBunSqlite();
   if (!adapter) adapter = await tryBetterSqlite();
   if (!adapter) adapter = await tryNodeSqlite();
   if (!adapter) adapter = await trySqlJs();
