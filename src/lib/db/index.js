@@ -1,5 +1,6 @@
 // Public API barrel — all DB functions
-import { getAdapter } from "./driver.js";
+import { getAdapter, flushDb as _flushDb } from "./driver.js";
+export const flushDb = _flushDb;
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
 
 // Settings

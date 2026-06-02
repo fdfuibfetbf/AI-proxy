@@ -7,6 +7,7 @@ import {
   pollForToken 
 } from "@/lib/oauth/providers";
 import { createProviderConnection } from "@/models";
+import { flushDb } from "@/lib/localDb";
 import {
   startCodexProxy,
   stopCodexProxy,
@@ -44,6 +45,7 @@ async function completeXaiManualCode(code, state) {
         : null,
       testStatus: "active",
     });
+    await flushDb();
     clearXaiSession(state);
     stopXaiProxy();
     return {
@@ -220,6 +222,7 @@ export async function POST(request, { params }) {
           providerSpecificData,
           testStatus: "active",
         });
+        await flushDb();
 
         return NextResponse.json({
           success: true,
@@ -251,6 +254,7 @@ export async function POST(request, { params }) {
           : null,
         testStatus: "active",
       });
+      await flushDb();
 
       return NextResponse.json({ 
         success: true, 
@@ -305,6 +309,7 @@ export async function POST(request, { params }) {
             : null,
           testStatus: "active",
         });
+        await flushDb();
 
         return NextResponse.json({ 
           success: true, 

@@ -10,7 +10,9 @@ import { PRAGMA_SQL } from "../schema.js";
  * so data survives across serverless invocations.
  *
  * On init:  loads the blob from Postgres → hydrates sql.js
- * On write: debounced save of the blob back to Postgres
+ * On write: persists IMMEDIATELY (no debounce) because Vercel
+ *           serverless functions freeze after the response is sent,
+ *           so setTimeout-based debounce never fires.
  *
  * Requires POSTGRES_URL or DATABASE_URL env var.
  */
@@ -32,26 +34,28 @@ async function downloadWasm() {
 
 async function loadSql() {
   if (SQL) return SQL;
-  // On Vercel, we load WASM from CDN into memory directly
   const wasmBinary = await downloadWasm();
   SQL = await initSqlJs({ wasmBinary });
   return SQL;
 }
 
-function getNeonSql() {
-  // Lazy import to avoid bundling issues when not on Vercel
+function getConnUrl() {
   const url = process.env.POSTGRES_URL || process.env.DATABASE_URL;
   if (!url) throw new Error("[DB][vercel-pg] No POSTGRES_URL or DATABASE_URL env var");
-  // We use raw fetch for simple HTTP queries to Neon's SQL-over-HTTP
   return url;
 }
 
-/**
- * Execute a simple SQL query against Neon via their serverless driver.
- */
-async function neonQuery(connUrl, query, params = []) {
+// Cache the neon sql function so we don't re-import every call
+let _neonSql = null;
+async function getNeonSql(connUrl) {
+  if (_neonSql) return _neonSql;
   const { neon } = await import("@neondatabase/serverless");
-  const sql = neon(connUrl);
+  _neonSql = neon(connUrl);
+  return _neonSql;
+}
+
+async function neonQuery(connUrl, query, params = []) {
+  const sql = await getNeonSql(connUrl);
   return sql(query, params);
 }
 
@@ -62,7 +66,7 @@ async function ensureBlobTable(connUrl) {
   await neonQuery(connUrl, `
     CREATE TABLE IF NOT EXISTS _sqljs_blob (
       id INTEGER PRIMARY KEY DEFAULT 1,
-      data BYTEA NOT NULL,
+      data TEXT NOT NULL,
       updated_at TIMESTAMPTZ DEFAULT NOW(),
       CHECK (id = 1)
     )
@@ -71,40 +75,34 @@ async function ensureBlobTable(connUrl) {
 
 /**
  * Load the SQLite database blob from Postgres.
+ * Stored as base64-encoded TEXT for reliable transport.
  * Returns null if no blob exists yet (fresh database).
  */
 async function loadBlob(connUrl) {
   try {
     const rows = await neonQuery(connUrl, `SELECT data FROM _sqljs_blob WHERE id = 1`);
     if (rows.length > 0 && rows[0].data) {
-      // Neon returns bytea as a hex string prefixed with \x
-      const hex = rows[0].data;
-      if (typeof hex === "string" && hex.startsWith("\\x")) {
-        return Buffer.from(hex.slice(2), "hex");
-      }
-      // Could also be a Buffer/Uint8Array directly
-      return Buffer.from(hex);
+      return Buffer.from(rows[0].data, "base64");
     }
   } catch (e) {
-    // Table might not exist yet on first run
     if (!e.message?.includes("does not exist")) throw e;
   }
   return null;
 }
 
 /**
- * Save the SQLite database blob to Postgres.
+ * Save the SQLite database blob to Postgres as base64 TEXT.
  */
 async function saveBlob(connUrl, data) {
-  const hexStr = "\\x" + Buffer.from(data).toString("hex");
+  const b64 = Buffer.from(data).toString("base64");
   await neonQuery(connUrl, `
     INSERT INTO _sqljs_blob (id, data, updated_at) VALUES (1, $1, NOW())
     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
-  `, [hexStr]);
+  `, [b64]);
 }
 
 export async function createVercelPgAdapter() {
-  const connUrl = getNeonSql();
+  const connUrl = getConnUrl();
   const SQLLib = await loadSql();
 
   // Ensure blob storage table
@@ -119,32 +117,30 @@ export async function createVercelPgAdapter() {
   // Apply SQLite pragmas (WAL not useful in memory, but others are fine)
   try { db.exec(PRAGMA_SQL); } catch {}
 
-  // --- Debounced persistence to Postgres ---
+  // --- Immediate persistence to Postgres ---
+  // On Vercel serverless, setTimeout NEVER fires after the response is sent
+  // (the function is frozen). We MUST persist synchronously-ish by tracking
+  // a save promise and ensuring it completes before the response finishes.
   let dirty = false;
-  let saveTimer = null;
-  let savePromise = null;
-  const SAVE_DEBOUNCE_MS = 500; // Slightly longer debounce for network saves
+  let _savePromise = null;
 
-  async function persist() {
-    try {
-      const data = db.export();
-      await saveBlob(connUrl, data);
-      dirty = false;
-      console.log("[DB][vercel-pg] Persisted to Postgres");
-    } catch (e) {
-      console.error("[DB][vercel-pg] Persist failed:", e.message);
-    }
+  function persistNow() {
+    if (!dirty) return;
+    const data = db.export();
+    dirty = false;
+    _savePromise = saveBlob(connUrl, data)
+      .then(() => console.log("[DB][vercel-pg] Persisted to Postgres"))
+      .catch((e) => {
+        console.error("[DB][vercel-pg] Persist failed:", e.message);
+        dirty = true; // Mark dirty again so next write retries
+      })
+      .finally(() => { _savePromise = null; });
   }
 
-  function scheduleSave() {
+  function markDirty() {
     dirty = true;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      saveTimer = null;
-      if (dirty) {
-        savePromise = persist().finally(() => { savePromise = null; });
-      }
-    }, SAVE_DEBOUNCE_MS);
+    // Persist immediately — don't debounce on serverless
+    persistNow();
   }
 
   // --- Standard adapter interface (synchronous, matching SQLite adapters) ---
@@ -161,7 +157,7 @@ export async function createVercelPgAdapter() {
       stmt.step();
       const changes = db.getRowsModified();
       const lastInsertRowid = db.exec("SELECT last_insert_rowid() as id")[0]?.values?.[0]?.[0] ?? null;
-      scheduleSave();
+      markDirty();
       return { changes, lastInsertRowid };
     } finally {
       stmt.free();
@@ -193,7 +189,7 @@ export async function createVercelPgAdapter() {
 
   function exec(sql) {
     db.exec(sql);
-    scheduleSave();
+    markDirty();
   }
 
   function transaction(fn) {
@@ -202,7 +198,7 @@ export async function createVercelPgAdapter() {
     try {
       const result = fn();
       db.exec(`RELEASE ${sp}`);
-      scheduleSave();
+      markDirty();
       return result;
     } catch (e) {
       try { db.exec(`ROLLBACK TO ${sp}`); db.exec(`RELEASE ${sp}`); } catch {}
@@ -211,26 +207,23 @@ export async function createVercelPgAdapter() {
   }
 
   function close() {
-    if (saveTimer) clearTimeout(saveTimer);
-    // Final sync persist before close
-    if (dirty) {
-      const data = db.export();
-      // Fire-and-forget async save (best effort on shutdown)
-      saveBlob(connUrl, data).catch(() => {});
-    }
+    if (dirty) persistNow();
     db.close();
   }
 
-  // Flush on shutdown
-  const flush = () => {
+  /**
+   * Wait for any in-flight save to complete.
+   * API routes should call `await db.flush?.()` before returning the response
+   * to ensure the blob is fully written to Postgres.
+   */
+  async function flush() {
+    if (_savePromise) await _savePromise;
+    // If still dirty after the last promise resolved, persist again
     if (dirty) {
-      try {
-        const data = db.export();
-        saveBlob(connUrl, data).catch(() => {});
-      } catch {}
+      persistNow();
+      if (_savePromise) await _savePromise;
     }
-  };
-  process.on("beforeExit", flush);
+  }
 
-  return { driver: "vercel-pg (sql.js→neon)", run, get, all, exec, transaction, close };
+  return { driver: "vercel-pg (sql.js→neon)", run, get, all, exec, transaction, close, flush };
 }

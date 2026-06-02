@@ -109,3 +109,13 @@ export function getAdapterSync() {
   if (!state.instance) throw new Error("[DB] adapter not initialized — await getAdapter() first");
   return state.instance;
 }
+
+/**
+ * Flush any pending writes to persistent storage.
+ * Critical on Vercel serverless: the adapter's async save must complete
+ * before the response is sent, otherwise the function freezes and data is lost.
+ * No-op for local SQLite adapters.
+ */
+export async function flushDb() {
+  if (state.instance?.flush) await state.instance.flush();
+}
